@@ -5,8 +5,26 @@ import json
 import time
 from tqdm import tqdm
 
-# Supported video file extensions
 VIDEO_EXTENSIONS = {".mov", ".mp4", ".mkv", ".avi"}
+
+def check_gpu_support():
+    """Detect available GPU support."""
+    try:
+        # Check for NVIDIA support
+        result = subprocess.run(["ffmpeg", "-hwaccels"], stdout=subprocess.PIPE, text=True)
+        hw_accels = result.stdout.lower()
+        nvidia_support = "cuda" in hw_accels or "nvenc" in hw_accels
+        amd_support = "amf" in hw_accels
+
+        if nvidia_support:
+            return "nvidia"
+        elif amd_support:
+            return "amd"
+        else:
+            return "none"
+    except Exception as e:
+        print(f"Error detecting GPU support: {e}")
+        return "none"
 
 def get_file_info(file_path):
     """Retrieve file metadata using ffprobe."""
@@ -36,8 +54,8 @@ def get_file_info(file_path):
         print(f"Error getting file info for {file_path}: {e}")
         return 0, 0.0, "Unknown", "Unknown"
 
-def convert_to_prores(input_file, force_overwrite=False):
-    """Convert a video file to ProRes 422 HQ with a progress bar."""
+def convert_to_prores(input_file, gpu_type, force_overwrite=False):
+    """Convert a video file to ProRes 422 HQ with GPU acceleration."""
     nb_frames, duration, video_codec, audio_codec = get_file_info(input_file)
     file_dir = os.path.dirname(input_file)
     file_name = os.path.basename(input_file)
@@ -49,14 +67,21 @@ def convert_to_prores(input_file, force_overwrite=False):
 
     output_file = os.path.join(file_dir, f"{file_base}_prores{file_ext}")
 
-    # Check if the output file exists
     if os.path.exists(output_file) and not force_overwrite:
         print(f"File exists: {output_file}. Skipping (use -f to overwrite).")
         return
 
-    command = [
-        "ffmpeg",
-        "-i", input_file,
+    # Base FFmpeg command
+    command = ["ffmpeg", "-i", input_file]
+
+    # Add GPU decoding if supported
+    if gpu_type == "nvidia":
+        command += ["-hwaccel", "cuda"]
+    elif gpu_type == "amd":
+        command += ["-hwaccel", "dxva2"]
+
+    # Add ProRes encoding options
+    command += [
         "-c:v", "prores_ks",
         "-profile:v", "prores_hq",
         "-pix_fmt", "yuv422p",
@@ -98,7 +123,7 @@ def convert_to_prores(input_file, force_overwrite=False):
         else:
             print(f"Error processing: {input_file}", file=sys.stderr)
 
-def process_directory(directory, force_overwrite=False):
+def process_directory(directory, gpu_type, force_overwrite=False):
     """Process all video files in a directory and its subdirectories."""
     if not os.path.isdir(directory):
         print(f"Error: Directory '{directory}' does not exist.", file=sys.stderr)
@@ -107,7 +132,7 @@ def process_directory(directory, force_overwrite=False):
     for root, _, files in os.walk(directory):
         for file in files:
             file_path = os.path.join(root, file)
-            convert_to_prores(file_path, force_overwrite)
+            convert_to_prores(file_path, gpu_type, force_overwrite)
 
 def main():
     """Main function to handle user input and process directories."""
@@ -128,9 +153,14 @@ def main():
         print("Error: No directories specified.")
         sys.exit(1)
 
+    gpu_type = check_gpu_support()
+    print(f"Detected GPU: {gpu_type}")
+    if gpu_type == "none":
+        print("No GPU acceleration available. Proceeding with CPU-only encoding.")
+
     for directory in directories:
         print(f"Processing directory: {directory} (Force Overwrite: {force_overwrite})")
-        process_directory(directory, force_overwrite)
+        process_directory(directory, gpu_type, force_overwrite)
 
 if __name__ == "__main__":
     main()
