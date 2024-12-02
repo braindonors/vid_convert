@@ -54,8 +54,8 @@ def get_file_info(file_path):
         print(f"Error getting file info for {file_path}: {e}")
         return 0, 0.0, "Unknown", "Unknown"
 
-def convert_to_prores(input_file, gpu_type, force_overwrite=False):
-    """Convert a video file to ProRes 422 HQ with GPU acceleration."""
+def convert_to_prores_and_proxy(input_file, gpu_type, force_overwrite=False, generate_proxy=False, scale_proxy=False):
+    """Convert a video file to ProRes 422 HQ and optionally generate proxy footage."""
     nb_frames, duration, video_codec, audio_codec = get_file_info(input_file)
     file_dir = os.path.dirname(input_file)
     file_name = os.path.basename(input_file)
@@ -65,11 +65,16 @@ def convert_to_prores(input_file, gpu_type, force_overwrite=False):
         print(f"Skipping unsupported file: {input_file}")
         return
 
-    output_file = os.path.join(file_dir, f"{file_base}_prores{file_ext}")
+    prores_output_file = os.path.join(file_dir, f"{file_base}_prores{file_ext}")
+    proxy_output_file = os.path.join(file_dir, f"{file_base}_proxy.mp4")
 
-    if os.path.exists(output_file) and not force_overwrite:
-        print(f"File exists: {output_file}. Skipping (use -f to overwrite).")
+    if os.path.exists(prores_output_file) and not force_overwrite:
+        print(f"File exists: {prores_output_file}. Skipping (use -f to overwrite).")
         return
+
+    if generate_proxy and os.path.exists(proxy_output_file) and not force_overwrite:
+        print(f"File exists: {proxy_output_file}. Skipping proxy (use -f to overwrite).")
+        generate_proxy = False
 
     # Base FFmpeg command
     command = ["ffmpeg", "-i", input_file]
@@ -86,11 +91,27 @@ def convert_to_prores(input_file, gpu_type, force_overwrite=False):
         "-profile:v", "prores_hq",
         "-pix_fmt", "yuv422p",
         "-c:a", "copy",
-        output_file
+        prores_output_file
     ]
+
+    # Add proxy generation options
+    if generate_proxy:
+        proxy_command = [
+            "-c:v", "libx265",
+            "-crf", "28",
+            "-preset", "medium",
+            "-c:a", "aac",
+        ]
+        if scale_proxy:
+            proxy_command += ["-vf", "scale=iw*0.5:ih*0.5"]
+        proxy_command.append(proxy_output_file)
+        command += proxy_command
 
     print(f"\nProcessing: {file_name}")
     print(f"Codec: {video_codec} (Audio: {audio_codec}) ... converting to ProRes 422 HQ")
+    if generate_proxy:
+        print(f"Generating proxy footage: {proxy_output_file}")
+        print(f"Proxy scaling: {'Enabled' if scale_proxy else 'Disabled'}")
     print(f"Duration: {duration:.2f}s ({nb_frames} frames)\n")
 
     with tqdm(total=nb_frames, desc="Progress", unit="frame") as pbar:
@@ -119,11 +140,13 @@ def convert_to_prores(input_file, gpu_type, force_overwrite=False):
         pbar.close()
 
         if process.returncode == 0:
-            print(f"Successfully processed: {output_file}")
+            print(f"Successfully processed: {prores_output_file}")
+            if generate_proxy:
+                print(f"Proxy created: {proxy_output_file}")
         else:
             print(f"Error processing: {input_file}", file=sys.stderr)
 
-def process_directory(directory, gpu_type, force_overwrite=False):
+def process_directory(directory, gpu_type, force_overwrite=False, generate_proxy=False, scale_proxy=False):
     """Process all video files in a directory and its subdirectories."""
     if not os.path.isdir(directory):
         print(f"Error: Directory '{directory}' does not exist.", file=sys.stderr)
@@ -132,20 +155,26 @@ def process_directory(directory, gpu_type, force_overwrite=False):
     for root, _, files in os.walk(directory):
         for file in files:
             file_path = os.path.join(root, file)
-            convert_to_prores(file_path, gpu_type, force_overwrite)
+            convert_to_prores_and_proxy(file_path, gpu_type, force_overwrite, generate_proxy, scale_proxy)
 
 def main():
     """Main function to handle user input and process directories."""
     if len(sys.argv) < 2:
-        print("Usage: python convert_to_prores.py [-f] <directory1> [directory2 ...]")
+        print("Usage: python convert_to_prores.py [-f] [--proxy] [--scale] <directory1> [directory2 ...]")
         sys.exit(1)
 
     force_overwrite = False
+    generate_proxy = False
+    scale_proxy = False
     directories = []
 
     for arg in sys.argv[1:]:
         if arg in ("-f", "--force"):
             force_overwrite = True
+        elif arg == "--proxy":
+            generate_proxy = True
+        elif arg == "--scale":
+            scale_proxy = True
         else:
             directories.append(arg)
 
@@ -159,8 +188,8 @@ def main():
         print("No GPU acceleration available. Proceeding with CPU-only encoding.")
 
     for directory in directories:
-        print(f"Processing directory: {directory} (Force Overwrite: {force_overwrite})")
-        process_directory(directory, gpu_type, force_overwrite)
+        print(f"Processing directory: {directory} (Force Overwrite: {force_overwrite}, Proxy: {generate_proxy}, Scale Proxy: {scale_proxy})")
+        process_directory(directory, gpu_type, force_overwrite, generate_proxy, scale_proxy)
 
 if __name__ == "__main__":
     main()
