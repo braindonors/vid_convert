@@ -101,7 +101,7 @@ def convert_to_prores_and_proxy(input_file, gpu_type, force_overwrite=False, gen
 
     command += [
         "-c:v", "prores_ks",
-        "-profile:v", "prores_hq",
+        "-profile:v", "3",
         "-pix_fmt", "yuv422p",
         "-c:a", "copy",
         prores_output_file
